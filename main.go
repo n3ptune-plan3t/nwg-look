@@ -43,6 +43,7 @@ var (
 	rowToFocus            *gtk.ListBoxRow
 	voc                   map[string]string
 	gtkThemePaths         map[string]string // theme name to path
+	colorSyncManager		*ColorSyncManager
 )
 
 type programSettings struct {
@@ -287,6 +288,9 @@ func main() {
 	dataDirs = getDataDirs()
 	voc = loadVocabulary(lang)
 
+	// Initialize color sync manager
+	initColorSync()
+
 	// initialize gsettings type with default gtk values
 	gsettings = gsettingsNewWithDefaults()
 
@@ -417,6 +421,10 @@ func main() {
 	item6, _ := getMenuItem(builder, "item-preferences")
 	item6.SetLabel(voc["preferences"])
 	item6.Connect("button-release-event", displayProgramSettingsForm)
+
+    item7, _ := getMenuItem(builder, "item-color-sync")
+    item7.SetLabel("Color Sync")
+    item7.Connect("button-release-event", displayColorSyncForm)
 
 	btnClose, _ := getButton(builder, "btn-close")
 	btnClose.SetLabel(voc["close"])
