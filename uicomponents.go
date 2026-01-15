@@ -34,10 +34,12 @@ func setUpThemeListBox(currentTheme string) *gtk.ListBox {
 		eventBox.Connect("button-press-event", func() {
 			gtkSettings.SetProperty("gtk-theme-name", n)
 			gsettings.gtkTheme = n
+			onThemeChanged(n)
 		})
 		row.Connect("focus-in-event", func() {
 			gtkSettings.SetProperty("gtk-theme-name", n)
 			gsettings.gtkTheme = n
+			onThemeChanged(n)
 		})
 		if n == currentTheme {
 			rowToSelect = row
