@@ -6,14 +6,12 @@ pkgver=1.0.7
 pkgrel=1
 pkgdesc='GTK settings editor adapted to work in wlroots-based Wayland compositors with color synchronization'
 arch=('x86_64' 'aarch64')
-url='https://github.com/n3ptune-plan3t/nwg-look'
+url='https://github.com/nwg-piotr/nwg-look'
 license=('MIT')
 depends=('gtk3' 'xcur2png')
 makedepends=('go')
-$url/archive/refs/tags/$pkgver.tar.gz
-https://github.com/n3ptune-plan3t/nwg-look/archive/refs/tags/1.0.7.tar.gz
-source=("$url/archive/refs/tags/$pkgver.tar.gz")
-sha256sums=('00e7ebe8411021619570fe367ba5e1e65bfb5a1c0fdda36598571daba25cd826')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/n3ptune-plan3t/$pkgname/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')  # Update with actual checksum after release
 
 prepare() {
     cd "$pkgname-$pkgver"
