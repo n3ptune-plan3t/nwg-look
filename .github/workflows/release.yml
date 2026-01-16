@@ -54,7 +54,7 @@ jobs:
             exit 1
           fi
           
-          TAG="v${VERSION}"
+          TAG="${VERSION}"
           
           # Check if tag already exists
           if git rev-parse "$TAG" >/dev/null 2>&1; then
