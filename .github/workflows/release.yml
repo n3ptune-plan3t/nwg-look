@@ -1,0 +1,421 @@
+# .github/workflows/manual-release.yml
+name: Manual Release (Browser-Triggered)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (without v prefix, e.g., 1.0.7)'
+        required: true
+        type: string
+      create_tag:
+        description: 'Create git tag'
+        required: true
+        type: boolean
+        default: true
+      publish_release:
+        description: 'Publish GitHub release'
+        required: true
+        type: boolean
+        default: true
+      release_type:
+        description: 'Release type'
+        required: true
+        type: choice
+        options:
+          - stable
+          - beta
+          - rc
+        default: stable
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version format
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          
+          # Validate version format (semantic versioning)
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+            echo "Error: Invalid version format. Use semantic versioning (e.g., 1.0.7)"
+            exit 1
+          fi
+          
+          TAG="v${VERSION}"
+          
+          # Check if tag already exists
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Error: Tag $TAG already exists"
+            exit 1
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          
+          echo "✓ Version validated: ${VERSION}"
+          echo "✓ Tag to create: ${TAG}"
+
+      - name: Update version in source files
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # Update main.go
+          sed -i "s/const version = \".*\"/const version = \"${VERSION}\"/" main.go
+          
+          # Update arch/PKGBUILD
+          sed -i "s/pkgver=.*/pkgver=${VERSION}/" arch/PKGBUILD
+          
+          echo "✓ Version updated in source files"
+
+      - name: Commit version changes
+        if: github.event.inputs.create_tag == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add main.go arch/PKGBUILD
+          git commit -m "Release v${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git push origin HEAD:${{ github.ref_name }}
+
+  create-tag:
+    name: Create Git Tag
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.event.inputs.create_tag == 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - name: Create and push tag
+        run: |
+          TAG="${{ needs.validate.outputs.tag }}"
+          VERSION="${{ needs.validate.outputs.version }}"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          
+          echo "✓ Created and pushed tag: $TAG"
+
+  build-binaries:
+    name: Build Release Binaries
+    needs: [validate, create-tag]
+    if: always() && needs.validate.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            goarch: amd64
+          - arch: arm64
+            goarch: arm64
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libcairo2-dev \
+            libglib2.0-dev \
+            xcur2png
+
+      - name: Install cross-compiler for ARM64
+        if: matrix.arch == 'arm64'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build binary
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+          CC: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
+        run: |
+          make build
+
+      - name: Create distribution package
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          PKG_DIR="nwg-look-${VERSION}-linux-${ARCH}"
+          
+          mkdir -p ${PKG_DIR}/{bin,share/{nwg-look,applications,pixmaps}}
+          
+          # Copy files
+          cp bin/nwg-look ${PKG_DIR}/bin/
+          cp -r langs ${PKG_DIR}/share/nwg-look/
+          cp stuff/main.glade ${PKG_DIR}/share/nwg-look/
+          cp stuff/nwg-look.desktop ${PKG_DIR}/share/applications/
+          cp stuff/nwg-look.svg ${PKG_DIR}/share/pixmaps/
+          cp README.md LICENSE ${PKG_DIR}/
+          
+          # Create install script
+          cat > ${PKG_DIR}/install.sh << 'INSTALLEOF'
+          #!/bin/bash
+          set -e
+          PREFIX="${PREFIX:-/usr}"
+          
+          echo "Installing nwg-look to ${PREFIX}..."
+          
+          sudo mkdir -p ${PREFIX}/bin
+          sudo mkdir -p ${PREFIX}/share/nwg-look/langs
+          sudo mkdir -p ${PREFIX}/share/applications
+          sudo mkdir -p ${PREFIX}/share/pixmaps
+          sudo mkdir -p ${PREFIX}/share/doc/nwg-look
+          sudo mkdir -p ${PREFIX}/share/licenses/nwg-look
+          
+          sudo cp bin/nwg-look ${PREFIX}/bin/
+          sudo cp -r share/nwg-look/langs ${PREFIX}/share/nwg-look/
+          sudo cp share/nwg-look/main.glade ${PREFIX}/share/nwg-look/
+          sudo cp share/applications/nwg-look.desktop ${PREFIX}/share/applications/
+          sudo cp share/pixmaps/nwg-look.svg ${PREFIX}/share/pixmaps/
+          sudo cp README.md ${PREFIX}/share/doc/nwg-look/
+          sudo cp LICENSE ${PREFIX}/share/licenses/nwg-look/
+          
+          echo "✓ Installation complete!"
+          echo ""
+          echo "Run 'nwg-look' to start the application."
+          INSTALLEOF
+          
+          chmod +x ${PKG_DIR}/install.sh
+          
+          # Create tarball
+          tar czf ${PKG_DIR}.tar.gz ${PKG_DIR}
+          
+          # Generate checksum
+          sha256sum ${PKG_DIR}.tar.gz > ${PKG_DIR}.tar.gz.sha256
+          
+          echo "✓ Created package: ${PKG_DIR}.tar.gz"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.arch }}
+          path: |
+            nwg-look-*.tar.gz
+            nwg-look-*.tar.gz.sha256
+
+  build-arch-package:
+    name: Build Arch Linux Package
+    needs: [validate, create-tag]
+    if: always() && needs.validate.result == 'success'
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git go gtk3 xcur2png sudo
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Prepare build environment
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builder:builder .
+
+      - name: Build package
+        run: |
+          su - builder -c "cd $PWD/arch && makepkg -sf --noconfirm"
+
+      - name: List built packages
+        run: |
+          ls -lh arch/*.pkg.tar.zst
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: arch/*.pkg.tar.zst
+
+  create-github-release:
+    name: Create GitHub Release
+    needs: [validate, build-binaries, build-arch-package]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.publish_release == 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Organize release files
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.sha256" -o -name "*.pkg.tar.zst" \) \
+            -exec cp {} release/ \;
+          
+          ls -lh release/
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          RELEASE_TYPE="${{ github.event.inputs.release_type }}"
+          
+          cat > release_notes.md << 'NOTESEOF'
+          # nwg-look v$VERSION
+          
+          **Release Type**: $RELEASE_TYPE
+          
+          GTK settings editor for wlroots-based Wayland compositors with color synchronization.
+          
+          ## ✨ Features
+          
+          - 🎨 **Color Extraction**: Automatically extract colors from GTK themes
+          - 🔄 **Color Sync**: Synchronize colors across multiple applications
+          - 🖥️ **Terminal Support**: Alacritty, Kitty, Foot, Termite
+          - 📊 **UI Applications**: Waybar, Rofi, Dunst
+          - 🎯 **Easy Setup**: One-click installation and configuration
+          - 🔧 **Customizable**: Edit templates to match your preferences
+          
+          ## 📦 Installation
+          
+          ### Arch Linux
+          
+          ```bash
+          # Download and install
+          wget https://github.com/nwg-piotr/nwg-look/releases/download/v$VERSION/nwg-look-$VERSION-1-x86_64.pkg.tar.zst
+          sudo pacman -U nwg-look-$VERSION-1-x86_64.pkg.tar.zst
+          ```
+          
+          ### Binary Installation (x86_64)
+          
+          ```bash
+          wget https://github.com/nwg-piotr/nwg-look/releases/download/v$VERSION/nwg-look-$VERSION-linux-amd64.tar.gz
+          tar xzf nwg-look-$VERSION-linux-amd64.tar.gz
+          cd nwg-look-$VERSION-linux-amd64
+          ./install.sh
+          ```
+          
+          ### Binary Installation (ARM64)
+          
+          ```bash
+          wget https://github.com/nwg-piotr/nwg-look/releases/download/v$VERSION/nwg-look-$VERSION-linux-arm64.tar.gz
+          tar xzf nwg-look-$VERSION-linux-arm64.tar.gz
+          cd nwg-look-$VERSION-linux-arm64
+          ./install.sh
+          ```
+          
+          ## 🚀 Quick Start
+          
+          1. Run `nwg-look`
+          2. Go to "Color Sync" tab
+          3. Enable color synchronization
+          4. Select applications to sync
+          5. Change your GTK theme and watch colors update!
+          
+          ## 📋 Dependencies
+          
+          **Required:**
+          - gtk3
+          - xcur2png
+          - gsettings
+          
+          **Optional (for color sync):**
+          - alacritty, kitty, foot (terminals)
+          - waybar (status bar)
+          - rofi (launcher)
+          - dunst (notifications)
+          
+          ## 📄 Files
+          
+          | File | Description |
+          |------|-------------|
+          | `nwg-look-$VERSION-linux-amd64.tar.gz` | Linux x86_64 binary |
+          | `nwg-look-$VERSION-linux-arm64.tar.gz` | Linux ARM64 binary |
+          | `nwg-look-$VERSION-1-x86_64.pkg.tar.zst` | Arch Linux package |
+          | `*.sha256` | SHA256 checksums |
+          
+          ## 🔒 Verify Downloads
+          
+          ```bash
+          sha256sum -c nwg-look-$VERSION-linux-amd64.tar.gz.sha256
+          ```
+          
+          ---
+          
+          **Full Changelog**: https://github.com/nwg-piotr/nwg-look/commits/v$VERSION
+          NOTESEOF
+          
+          # Replace variables
+          sed -i "s/\$VERSION/$VERSION/g" release_notes.md
+          sed -i "s/\$RELEASE_TYPE/$RELEASE_TYPE/g" release_notes.md
+          
+          cat release_notes.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.validate.outputs.tag }}
+          name: Release ${{ needs.validate.outputs.tag }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ github.event.inputs.release_type != 'stable' }}
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: Release Summary
+    needs: [validate, create-github-release]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Summary
+        run: |
+          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ needs.validate.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: ${{ needs.validate.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Type**: ${{ github.event.inputs.release_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release Created**: ${{ github.event.inputs.publish_release }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status**: ✅ Release completed successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Published Files" >> $GITHUB_STEP_SUMMARY
+          echo "- Linux x86_64 binary tarball + checksum" >> $GITHUB_STEP_SUMMARY
+          echo "- Linux ARM64 binary tarball + checksum" >> $GITHUB_STEP_SUMMARY
+          echo "- Arch Linux package (.pkg.tar.zst)" >> $GITHUB_STEP_SUMMARY
