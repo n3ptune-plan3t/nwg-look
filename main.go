@@ -435,28 +435,36 @@ func main() {
 	btnApply, _ := getButton(builder, "btn-apply")
 	btnApply.SetLabel(voc["apply"])
 	btnApply.Connect("clicked", func() {
-		applyGsettings()
-		saveGsettingsBackup()
-
-		if preferences.ExportSettingsIni {
-			saveGtkIni3()
-		}
-		if preferences.ExportGtkRc20 {
-			saveGtkRc20()
-		}
-		if preferences.ExportIndexTheme {
-			saveIndexTheme()
-		}
-		if preferences.ExportXsettingsd {
-			saveXsettingsd()
-		}
-		if preferences.ExportGtk4Symlinks {
-			linkGtk4Stuff()
-			saveGtkIni4()
-		}
-		savePreferences()
+	    applyGsettings()
+	    saveGsettingsBackup()
+	
+	    if preferences.ExportSettingsIni {
+	        saveGtkIni3()
+	    }
+	    if preferences.ExportGtkRc20 {
+	        saveGtkRc20()
+	    }
+	    if preferences.ExportIndexTheme {
+	        saveIndexTheme()
+	    }
+	    if preferences.ExportXsettingsd {
+	        saveXsettingsd()
+	    }
+	    if preferences.ExportGtk4Symlinks {
+	        linkGtk4Stuff()
+	        saveGtkIni4()
+	    }
+	    savePreferences()
+	    
+	    // Apply color sync if enabled
+	    if colorSyncManager != nil && colorSyncManager.IsEnabled() {
+	        go func() {
+	            if err := colorSyncManager.ApplyTheme(gsettings.gtkTheme); err != nil {
+	                log.Warnf("Failed to sync colors: %v", err)
+	            }
+	        }()
+	    }
 	})
-
 	verLabel, _ := getLabel(builder, "version-label")
 	verLabel.SetMarkup(fmt.Sprintf("<b>nwg-look</b> v%s <a href='https://github.com/nwg-piotr/nwg-look'>GitHub</a>", version))
 
