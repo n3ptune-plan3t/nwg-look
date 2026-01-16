@@ -1,0 +1,38 @@
+# Maintainer: Piotr Miller <nwg.piotr@gmail.com>
+# Contributor: Your Name <your.email@example.com>
+
+pkgname=nwg-look
+pkgver=1.0.7
+pkgrel=1
+pkgdesc='GTK settings editor adapted to work in wlroots-based Wayland compositors with color synchronization'
+arch=('x86_64' 'aarch64')
+url='https://github.com/n3ptune-plan3t/nwg-look'
+license=('MIT')
+depends=('gtk3' 'xcur2png')
+makedepends=('go')
+$url/archive/refs/tags/$pkgver.tar.gz
+https://github.com/n3ptune-plan3t/nwg-look/archive/refs/tags/1.0.7.tar.gz
+source=("$url/archive/refs/tags/$pkgver.tar.gz")
+sha256sums=('00e7ebe8411021619570fe367ba5e1e65bfb5a1c0fdda36598571daba25cd826')
+
+prepare() {
+    cd "$pkgname-$pkgver"
+    export GOPATH="$srcdir/gopath"
+    go mod download
+}
+
+build() {
+    cd "$pkgname-$pkgver"
+    export CGO_CPPFLAGS="${CPPFLAGS}"
+    export CGO_CFLAGS="${CFLAGS}"
+    export CGO_CXXFLAGS="${CXXFLAGS}"
+    export CGO_LDFLAGS="${LDFLAGS}"
+    export GOFLAGS="-buildmode=pie -trimpath -ldflags=-linkmode=external -mod=readonly -modcacherw"
+    
+    make build
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    make DESTDIR="$pkgdir" PREFIX="/usr" install
+}
