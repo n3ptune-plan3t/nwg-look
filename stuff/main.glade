@@ -64,6 +64,13 @@
                 <property name="label" translatable="yes">Preferences</property>
               </object>
             </child>
+            <child>
+              <object class="GtkMenuItem" id="item-color-sync">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="label" translatable="yes">Color Sync</property>
+              </object>
+            </child>
           </object>
           <packing>
             <property name="left-attach">0</property>
